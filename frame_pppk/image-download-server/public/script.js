@@ -1102,74 +1102,57 @@ async _toPrintableUrl(it) {
   catch { return ''; }
 }
 
-/* ---- Print a single item ---- */
-async _printOne(it) {
-  const url = await this._toPrintableUrl(it);
-  if (!url) { alert('Unable to open image for printing.'); return; }
-  this._printImagesInNewWindow([url], this._isMirrored(it));
+_printOne(it) {
+  return this._printItems([it]);
 }
 
-/* ---- Print many items (selected) ---- */
 async _printItems(items) {
-  const urls = [];
-  const mirrors = [];
-  for (const it of items) {
-    const u = await this._toPrintableUrl(it);
-    if (u) { urls.push(u); mirrors.push(this._isMirrored(it)); }
-  }
-  if (!urls.length) { alert('No printable images.'); return; }
-  const shouldMirror = mirrors.some(Boolean); // mirror all if any “photo result”
-  this._printImagesInNewWindow(urls, shouldMirror);
-}
+  // Open before the asynchronous image loads so the browser allows the popup.
+  const preview = window.open('', '_blank');
+  if (!preview) { alert('Please allow pop-ups to print.'); return; }
+  const doc = preview.document;
+  doc.write(`<!doctype html><html><head><title>Print Photos — PixelPop Studio</title>
+    <style>
+      body { margin: 0; font: 16px system-ui; }
+      header { padding: 1rem; }
+      .page { display: grid; place-items: center; min-height: 95vh; break-after: page; }
+      .page:last-child { break-after: auto; }
+      img { max-width: 100%; max-height: 92vh; object-fit: contain; }
+      .mirrored { transform: scaleX(-1); }
+      @media print { header { display: none; } }
+    </style></head><body>
+    <header><button type="button" disabled>Print</button> <span role="status">Loading photos…</span></header>
+    <main></main></body></html>`);
+  doc.close();
 
-/* ---- Open a print window (one image per page). Mirror if requested. ---- */
-_printImagesInNewWindow(urls, mirror = false) {
-  const w = window.open('', '_blank');
-  if (!w) { alert('Please allow pop-ups to print.'); return; }
+  const photos = await Promise.all(items.map(async it => ({
+    url: await this._toPrintableUrl(it), mirror: this._isMirrored(it),
+  })));
+  const release = () => photos.forEach(({ url }) => { if (url) URL.revokeObjectURL(url); });
+  if (preview.closed) { release(); return; }
+  preview.addEventListener('pagehide', release, { once: true });
 
-  w.document.write(`
-    <html>
-      <head>
-        <title>Print Photos — PixelPop Studio</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <style>
-          @media print { img { page-break-inside: avoid; } }
-          html, body { margin:0; padding:0; background:#fff; }
-          .page { display:flex; align-items:center; justify-content:center; min-height:100vh; }
-          img { max-width:100%; max-height:95vh; ${mirror ? 'transform:scaleX(-1); transform-origin:center;' : ''} }
-        </style>
-      </head>
-      <body>
-        ${urls.map(u => `<div class="page"><img src="${u}" /></div>`).join('')}
-        <script>
-          (function(){
-            const imgs = Array.from(document.images);
-            const waitAll = Promise.all(
-              imgs.map(img => img.complete ? Promise.resolve() : new Promise(res => img.onload = res))
-            );
-
-            function cleanup() {
-              try {
-                const openerURL = (window.opener && window.opener.URL) ? window.opener.URL : URL;
-                imgs.forEach(img => {
-                  const src = img.getAttribute('src') || '';
-                  if (src.startsWith('blob:')) openerURL.revokeObjectURL(src);
-                });
-              } catch (e) {}
-              window.close();
-            }
-
-            waitAll.then(() => {
-              window.print();
-              window.addEventListener('afterprint', cleanup, { once: true });
-              window.addEventListener('beforeunload', cleanup, { once: true });
-            });
-          })();
-        <\/script>
-      </body>
-    </html>
-  `);
-  w.document.close();
+  const main = doc.querySelector('main');
+  const button = doc.querySelector('button');
+  const status = doc.querySelector('[role="status"]');
+  const loaded = await Promise.all(photos.filter(photo => photo.url).map(({ url, mirror }) => {
+    const page = doc.createElement('div');
+    page.className = 'page';
+    const image = doc.createElement('img');
+    image.alt = 'Photo to print';
+    if (mirror) image.classList.add('mirrored');
+    page.append(image);
+    main.append(page);
+    return new Promise(resolve => {
+      image.onload = () => resolve(true);
+      image.onerror = () => { page.remove(); resolve(false); };
+      image.src = url;
+    });
+  }));
+  if (preview.closed) return;
+  button.disabled = !loaded.some(Boolean);
+  button.addEventListener('click', () => preview.print());
+  status.textContent = button.disabled ? 'Unable to load photos.' : 'Ready to print.';
 }
 
 /* ---- Selection helpers (used by bulk actions) ---- */
