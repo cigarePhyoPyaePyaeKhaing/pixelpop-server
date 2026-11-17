@@ -2494,3 +2494,72 @@ window.addEventListener('DOMContentLoaded', () => {
 
   
 });
+
+
+
+/* Preserve captured-photo aspect ratios in every booth layout. */
+PixelPopStudio.prototype.createFinalLayout = function () {
+  const canvas = document.getElementById('final-canvas');
+  if (!canvas) return;
+
+  const photoCounts = { single: 1, twostrip: 2, threestrip: 3, fourstrip: 4 };
+  const count = photoCounts[this.currentLayout] || 1;
+  const sources = this.capturedPhotos.slice(0, count);
+  this.isLayoutReady = false;
+
+  const loadPhoto = (src) => new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => resolve(null);
+    image.src = src;
+  });
+
+  Promise.all(sources.map(loadPhoto)).then((loadedPhotos) => {
+    const photos = loadedPhotos.filter((image) => image && image.naturalWidth && image.naturalHeight);
+    if (!photos.length) return;
+
+    const width = 600;
+    const padding = 30;
+    const gap = 18;
+    const titleSpace = 50;
+    const photoWidth = width - padding * 2;
+    const photoHeights = photos.map((image) =>
+      Math.max(1, Math.round(photoWidth * image.naturalHeight / image.naturalWidth))
+    );
+    const photosHeight = photoHeights.reduce((sum, height) => sum + height, 0);
+    const gapsHeight = gap * Math.max(0, photos.length - 1);
+
+    canvas.width = width;
+    canvas.height = padding + photosHeight + gapsHeight + titleSpace + padding;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    let y = padding;
+    photos.forEach((image, index) => {
+      const height = photoHeights[index];
+      ctx.drawImage(image, padding, y, photoWidth, height);
+      y += height + gap;
+    });
+
+    this.addLayoutTitle(ctx, canvas, 'PixelPop Studio');
+    this.markLayoutReady();
+  }).catch((error) => {
+    console.error('Could not compose photo results:', error);
+  });
+};
+
+/* Keep result text readable after the preview canvas is mirrored for selfie viewing. */
+PixelPopStudio.prototype.addLayoutTitle = function (ctx, canvas, text) {
+  ctx.save();
+  ctx.fillStyle = '#343a40';
+  ctx.font = '600 20px Poppins, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.translate(canvas.width / 2, 0);
+  ctx.scale(-1, 1);
+  ctx.fillText(text, 0, canvas.height - 25, canvas.width - 40);
+  ctx.restore();
+};
