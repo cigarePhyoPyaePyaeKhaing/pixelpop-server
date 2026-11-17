@@ -1107,52 +1107,68 @@ _printOne(it) {
 }
 
 async _printItems(items) {
-  // Open before the asynchronous image loads so the browser allows the popup.
-  const preview = window.open('', '_blank');
-  if (!preview) { alert('Please allow pop-ups to print.'); return; }
-  const doc = preview.document;
-  doc.write(`<!doctype html><html><head><title>Print Photos — PixelPop Studio</title>
+  const preview = document.createElement('dialog');
+  preview.className = 'pixelpop-print-preview';
+  preview.setAttribute('aria-label', 'Print photos');
+  preview.innerHTML = `
     <style>
-      body { margin: 0; font: 16px system-ui; }
-      header { padding: 1rem; }
-      .page { display: grid; place-items: center; min-height: 95vh; break-after: page; }
-      .page:last-child { break-after: auto; }
-      img { max-width: 100%; max-height: 92vh; object-fit: contain; }
-      .mirrored { transform: scaleX(-1); }
-      @media print { header { display: none; } }
-    </style></head><body>
-    <header><button type="button" disabled>Print</button> <span role="status">Loading photos…</span></header>
-    <main></main></body></html>`);
-  doc.close();
+      .pixelpop-print-preview { width: min(90vw, 820px); max-height: 90vh; }
+      .pixelpop-print-preview::backdrop { background: #000a; }
+      .pixelpop-print-preview header { display: flex; gap: .75rem; align-items: center; }
+      .pixelpop-print-preview .print-page { display: grid; place-items: center; margin-block: 1rem; }
+      .pixelpop-print-preview img { max-width: 100%; max-height: 65vh; object-fit: contain; }
+      .pixelpop-print-preview .print-mirror { transform: scaleX(-1); }
+      @media print {
+        body:has(> .pixelpop-print-preview[open]) > :not(.pixelpop-print-preview) { display: none !important; }
+        .pixelpop-print-preview[open] { position: static; width: auto; max-width: none; max-height: none; margin: 0; padding: 0; border: 0; overflow: visible; }
+        .pixelpop-print-preview::backdrop { display: none; }
+        .pixelpop-print-preview header { display: none; }
+        .pixelpop-print-preview .print-page { margin: 0; min-height: 95vh; break-after: page; }
+        .pixelpop-print-preview .print-page:last-child { break-after: auto; }
+        .pixelpop-print-preview img { max-height: 92vh; }
+      }
+    </style>
+    <header><button type="button" disabled>Print</button><button type="button">Close</button>
+      <span role="status">Loading photos…</span></header>
+    <section aria-label="Photos to print"></section>`;
+  const [printButton, closeButton] = preview.querySelectorAll('button');
+  const status = preview.querySelector('[role="status"]');
+  const pages = preview.querySelector('section');
+  const urls = [];
+  preview.addEventListener('close', () => {
+    urls.forEach(url => URL.revokeObjectURL(url));
+    preview.remove();
+  }, { once: true });
+  closeButton.addEventListener('click', () => preview.close());
+  printButton.addEventListener('click', () => window.print());
+  document.body.append(preview);
+  preview.showModal();
 
-  const photos = await Promise.all(items.map(async it => ({
-    url: await this._toPrintableUrl(it), mirror: this._isMirrored(it),
-  })));
-  const release = () => photos.forEach(({ url }) => { if (url) URL.revokeObjectURL(url); });
-  if (preview.closed) { release(); return; }
-  preview.addEventListener('pagehide', release, { once: true });
-
-  const main = doc.querySelector('main');
-  const button = doc.querySelector('button');
-  const status = doc.querySelector('[role="status"]');
-  const loaded = await Promise.all(photos.filter(photo => photo.url).map(({ url, mirror }) => {
-    const page = doc.createElement('div');
-    page.className = 'page';
-    const image = doc.createElement('img');
+  const loaded = await Promise.all(items.map(async it => {
+    const page = document.createElement('div');
+    page.className = 'print-page';
+    page.hidden = true;
+    pages.append(page);
+    const url = await this._toPrintableUrl(it);
+    if (!url || !preview.open) {
+      if (url) URL.revokeObjectURL(url);
+      page.remove();
+      return false;
+    }
+    urls.push(url);
+    const image = document.createElement('img');
     image.alt = 'Photo to print';
-    if (mirror) image.classList.add('mirrored');
+    if (this._isMirrored(it)) image.classList.add('print-mirror');
     page.append(image);
-    main.append(page);
     return new Promise(resolve => {
-      image.onload = () => resolve(true);
+      image.onload = () => { page.hidden = false; resolve(true); };
       image.onerror = () => { page.remove(); resolve(false); };
       image.src = url;
     });
   }));
-  if (preview.closed) return;
-  button.disabled = !loaded.some(Boolean);
-  button.addEventListener('click', () => preview.print());
-  status.textContent = button.disabled ? 'Unable to load photos.' : 'Ready to print.';
+  if (!preview.open) return;
+  printButton.disabled = !loaded.some(Boolean);
+  status.textContent = printButton.disabled ? 'Unable to load photos.' : 'Ready to print.';
 }
 
 /* ---- Selection helpers (used by bulk actions) ---- */
