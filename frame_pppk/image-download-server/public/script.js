@@ -2361,36 +2361,38 @@ if (loginForm) {
 
 /* ---------- Forgot Password ---------- */
 if (forgotLink) {
-  forgotLink.addEventListener('click', async (e) => {
-    e.preventDefault();
-
-    const emailOrUsername = prompt('Enter the email of your account:');
-    if (!emailOrUsername) return;
-
-    const raw = emailOrUsername.trim();
-    const isEmail = raw.includes('@');
-
-    if (isEmail) {
-      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(raw)) {
-        alert("Please enter a valid email address.");
-        return;
+  forgotLink.addEventListener('click', (event) => {
+    event.preventDefault();
+    const dialog = document.createElement('dialog');
+    dialog.setAttribute('aria-label', 'Reset password');
+    dialog.innerHTML = `<form>
+      <h2>Reset password</h2>
+      <p>Enter your PixelPop account email.</p>
+      <label>Email <input type="email" name="email" autocomplete="email" required></label>
+      <button type="submit">Send reset email</button>
+      <button type="button">Close</button>
+      <p role="status" aria-live="polite"></p>
+    </form>`;
+    const form = dialog.querySelector('form');
+    const send = form.querySelector('[type="submit"]');
+    const status = form.querySelector('[role="status"]');
+    form.querySelector('[type="button"]').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => dialog.remove(), { once: true });
+    form.addEventListener('submit', async (submitEvent) => {
+      submitEvent.preventDefault();
+      send.disabled = true;
+      status.textContent = 'Sending…';
+      try {
+        const response = await doPost('/forgot-password', { email: form.elements.email.value.trim() });
+        if (!response.ok) throw new Error('Password reset request failed.');
+        status.textContent = response._json?.message || 'If that account exists, we sent a reset link.';
+      } catch {
+        status.textContent = 'Could not process password reset. Please try again.';
+        send.disabled = false;
       }
-    } else {
-      const usernameRegex = /^(?=.*[A-Za-z])[A-Za-z0-9]+$/;
-      if (!usernameRegex.test(raw)) {
-        alert('Username must contain letters (letters or letters+numbers allowed, numbers only are not allowed).');
-        return;
-      }
-    }
-
-    try {
-      const r = await doPost('/forgot-password', isEmail ? { email: raw } : { username: raw });
-      alert(r._json?.message || 'If that account exists, we sent a reset link.');
-    } catch (err) {
-      console.error(err);
-      alert('Could not process password reset. Please try again.');
-    }
+    });
+    document.body.append(dialog);
+    dialog.showModal();
   });
 }
 
