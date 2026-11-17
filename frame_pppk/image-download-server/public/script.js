@@ -1082,31 +1082,24 @@ _isMirrored(it) {
 }
 
 /* ---- Download helpers ---- */
-_downloadWithAuth(url, saveBlob, it) {
+async _fetchGalleryBlob(it) {
+  const path = it?.secureUrl || it?.urlFull || it?.url || '';
   const token = localStorage.getItem('token');
-  if (!url || !token) return alert('Unable to download. Please log in again.');
-  fetch(url, { headers: { Authorization: 'Bearer ' + token } })
-    .then(r => r.ok ? r.blob() : Promise.reject())
-    .then(blob => this._maybeMirrorBlobForDownload(it, blob))
-    .then(saveBlob)
-    .catch(() => alert('Download failed. Please try again.'));
+  if (!path || !token) throw new Error('Please log in to view this photo.');
+
+  const url = new URL(path, this.API_BASE);
+  if (url.origin !== new URL(this.API_BASE).origin) throw new Error('Unexpected photo origin.');
+  const response = await fetch(url, {
+    cache: 'no-store',
+    headers: { Authorization: 'Bearer ' + token },
+  });
+  if (!response.ok) throw new Error('Unable to load photo.');
+  return response.blob();
 }
 
-/* ---- Resolve a printable URL for an item (public if possible, else blob with auth) ---- */
-_toPrintableUrl(it) {
-  const abs = (u) => (!u ? '' : (u.startsWith('http') ? u : (this.API_BASE + u)));
-  const pub = abs(it.urlFull || it.originalUrl || it.urlPublic || it.url || '');
-  if (pub) return Promise.resolve(pub);
-
-  const sec = abs(it.secureUrl || it.urlFull || it.url || '');
-  const token = localStorage.getItem('token');
-  if (!sec || !token) return Promise.resolve('');
-
-  // Fetch secure image, convert to blob URL so the print window can load it (no headers there)
-  return fetch(sec, { headers: { Authorization: 'Bearer ' + token } })
-    .then(r => r.ok ? r.blob() : Promise.reject())
-    .then(blob => URL.createObjectURL(blob))
-    .catch(() => '');
+async _toPrintableUrl(it) {
+  try { return URL.createObjectURL(await this._fetchGalleryBlob(it)); }
+  catch { return ''; }
 }
 
 /* ---- Print a single item ---- */
@@ -1228,9 +1221,6 @@ _maybeMirrorBlobForDownload(it, blob) {
 }
 
 _downloadPhoto(it) {
-  // Prefer public URL, fallback to secure-with-auth; mirror only if photo-result
-  const pub = this._buildAbsUrl(it.urlFull || it.originalUrl || it.urlPublic || it.url || '');
-  const sec = this._buildAbsUrl(it.secureUrl || it.urlFull || it.url || '');
   const filename = it.fileName || `photo-${it.id || Date.now()}.jpg`;
 
   const saveBlob = (blob) => {
@@ -1241,15 +1231,10 @@ _downloadPhoto(it) {
     setTimeout(() => URL.revokeObjectURL(url), 800);
   };
 
-  if (pub) {
-    fetch(pub, { mode: 'cors' })
-      .then(r => r.ok ? r.blob() : Promise.reject())
-      .then(blob => this._maybeMirrorBlobForDownload(it, blob))
-      .then(saveBlob)
-      .catch(() => this._downloadWithAuth(sec, saveBlob, it));
-  } else {
-    this._downloadWithAuth(sec, saveBlob, it);
-  }
+  this._fetchGalleryBlob(it)
+    .then(blob => this._maybeMirrorBlobForDownload(it, blob))
+    .then(saveBlob)
+    .catch(() => alert('Download failed. Please try again.'));
 }
 
 /* ========= Cards ========= */
@@ -1261,7 +1246,14 @@ buildGalleryCard(it, index) {
   if (it.id) card.dataset.id = it.id;
 
   const img = document.createElement('img');
-  img.src = this._buildAbsUrl(it.url);
+  this._fetchGalleryBlob(it).then(blob => {
+    if (!img.isConnected) return;
+    const objectUrl = URL.createObjectURL(blob);
+    const release = () => URL.revokeObjectURL(objectUrl);
+    img.addEventListener('load', release, { once: true });
+    img.addEventListener('error', release, { once: true });
+    img.src = objectUrl;
+  }).catch(() => {});
   img.alt = it.fileName || 'Your photo';
   img.loading = 'lazy';
 
@@ -1556,12 +1548,6 @@ updateLightboxImage() {
   if (!imgEl) return;
 
   const it = this._galleryItems[this._currentLight] || {};
-  const abs = (u) => (!u ? '' : (u.startsWith('http') ? u : (this.API_BASE + u)));
-
-  const fullPref  = abs(it.urlFull || it.originalUrl || it.urlHigh || '');
-  const tryPublic = fullPref || abs(it.urlPublic || it.url || '');
-  const trySecure = abs(it.secureUrl || it.urlFull || it.url || '');
-
   if (counterEl) counterEl.textContent = `${this._currentLight + 1} / ${this._galleryItems.length}`;
 
   const shouldMirror = this._isMirrored(it);
@@ -1582,22 +1568,17 @@ updateLightboxImage() {
     applyMirror();
   };
 
-  imgEl.onload = onLoad;
-  imgEl.src = tryPublic || trySecure || '';
+  imgEl.removeAttribute('src');
   imgEl.alt = it.fileName || 'Photo';
-
-  imgEl.onerror = () => {
-    const token = localStorage.getItem('token');
-    if (!token || !trySecure) return;
-    fetch(trySecure, { headers: { Authorization: 'Bearer ' + token } })
-      .then(r => r.ok ? r.blob() : Promise.reject())
-      .then(blob => {
-        const blobUrl = URL.createObjectURL(blob);
-        imgEl.onload = onLoad;
-        imgEl.src = blobUrl;
-      })
-      .catch(() => {});
-  };
+  const request = this._lightboxPhotoRequest = {};
+  this._fetchGalleryBlob(it).then(blob => {
+    if (this._lightboxPhotoRequest !== request) return;
+    const objectUrl = URL.createObjectURL(blob);
+    const release = () => URL.revokeObjectURL(objectUrl);
+    imgEl.onload = () => { release(); onLoad(); };
+    imgEl.onerror = release;
+    imgEl.src = objectUrl;
+  }).catch(() => {});
 
   applyMirror();
 }
