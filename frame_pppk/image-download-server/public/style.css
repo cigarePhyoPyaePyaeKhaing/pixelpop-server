@@ -2042,3 +2042,31 @@ img, video, canvas {
   .layout-option { padding: 0.6rem 0.25rem; }
   .gallery-actions { grid-template-columns: 1fr; }
 }
+
+
+
+/* Keep the shutter reachable over the live camera preview */
+.camera-overlay {
+  pointer-events: none;
+}
+
+.camera-overlay .timer-display {
+  position: absolute;
+  top: clamp(0.75rem, 4vw, 1.5rem);
+  left: 50%;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.capture-button-container {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  pointer-events: none;
+}
+
+.capture-button {
+  pointer-events: auto;
+  touch-action: manipulation;
+}
