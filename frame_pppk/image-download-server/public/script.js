@@ -413,7 +413,17 @@ const requireLogin = () =>
     const loadingOverlay = document.getElementById('loading-overlay');
     const cameraFeed = document.getElementById('camera-feed');
 
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showError('Camera is unavailable in this browser. You can still upload a photo.');
+      return;
+    }
+
     if (loadingOverlay) loadingOverlay.style.display = 'flex';
+    const hideLoading = () => {
+      if (loadingOverlay) loadingOverlay.style.display = 'none';
+    };
+    // A browser permission prompt can leave getUserMedia pending indefinitely.
+    const loadingTimeout = setTimeout(hideLoading, 8000);
 
     navigator.mediaDevices.getUserMedia({
       video: {
@@ -434,7 +444,10 @@ const requireLogin = () =>
     .catch(error => {
       console.error('Camera access error:', error);
       showError('Camera access denied. Please allow camera permission and try again.');
-      if (loadingOverlay) loadingOverlay.style.display = 'none';
+    })
+    .finally(() => {
+      clearTimeout(loadingTimeout);
+      hideLoading();
     });
   }
 
